@@ -86,7 +86,7 @@ class Ecobee(object):
         request = requests.get(url, params=params)
         self.authorization_code = request.json()['code']
         self.pin = request.json()['ecobeePin']
-        log.warning('Please authorize your ecobee developer app with PIN code '
+        log.error('Please authorize your ecobee developer app with PIN code '
               + self.pin + '\nGoto https://www.ecobee.com/consumerportal'
               '/index.html, click\nMy Apps, Add application, Enter Pin'
               ' and click Authorize.\nAfter authorizing, call request_'
@@ -94,13 +94,13 @@ class Ecobee(object):
 
     def request_tokens(self):
         ''' Method to request API tokens from ecobee '''
-        log.debug("pyecobee: requesting tokens; current authentication flag is %s" % self.authenticated)
+        log.error("pyecobee: requesting tokens; current authentication flag is %s" % self.authenticated)
         url = 'https://api.ecobee.com/token'
         params = {'grant_type': 'ecobeePin', 'code': self.authorization_code,
                   'client_id': self.api_key}
         request = requests.post(url, params=params)
         if request.status_code == requests.codes.ok:
-            log.info("pyecobee: authenticated after requesting tokens")
+            log.error("pyecobee: authenticated after requesting tokens")
             self.access_token = request.json()['access_token']
             self.refresh_token = request.json()['refresh_token']
             self.write_tokens_to_file()
@@ -111,10 +111,10 @@ class Ecobee(object):
                   ' Status code: ' + str(request.status_code))
             self.authenticated = False
 
-        log.debug("pyecobee: finished requesting tokens; authenticated flag is %s" % self.authenticated)
+        log.error("pyecobee: finished requesting tokens; authenticated flag is %s" % self.authenticated)
 
     def refresh_tokens(self):
-        log.debug("pyecobee: refreshing tokens; current authentication flag is %s" % self.authenticated)
+        log.error("pyecobee: refreshing tokens; current authentication flag is %s" % self.authenticated)
         ''' Method to refresh API tokens from ecobee '''
         url = 'https://api.ecobee.com/token'
         params = {'grant_type': 'refresh_token',
@@ -122,18 +122,18 @@ class Ecobee(object):
                   'refresh_token': self.refresh_token}
         request = requests.post(url, params=params)
         if request.status_code == requests.codes.ok:
-            log.info("pyecobee: authenticated after refreshing tokens")
+            log.error("pyecobee: authenticated after refreshing tokens")
             self.access_token = request.json()['access_token']
             self.refresh_token = request.json()['refresh_token']
             self.write_tokens_to_file()
             self.authenticated = True
             return True
         else:
-            log.info("pyecobee: NOT authenticated after refreshing tokens")
+            log.error("pyecobee: NOT authenticated after refreshing tokens")
             self.request_pin()
             self.authenticated = False
 
-        log.debug("pyecobee: finished refreshing tokens; authenticated flag is %s" % self.authenticated)
+        log.error("pyecobee: finished refreshing tokens; authenticated flag is %s" % self.authenticated)
 
     def get_thermostats(self):
         seconds_remaining = RESPONSE_CACHE_TIME_SECONDS - time.time() + self.lastRefreshTime
@@ -159,15 +159,17 @@ class Ecobee(object):
             self.lastRefreshTime = time.time()
             log.debug("result: %s" % request.json())
             return self.thermostats
+            
+        elif request.status_code > 500:    # server issue, just try again later     
+            log.error("Ecobeee server error, status code = {}, retrying later".format(request.status_code))
+        
         else:
             self.authenticated = False
-            log.info("Error connecting to Ecobee while attempting to get "
-                  "thermostat data.  Refreshing tokens and trying again.")
+            log.error("pyecobee::get_thermostats(): Error connecting to Ecobee while attempting to get thermostat data, status code = {}".format(request.status_code))
             if self.refresh_tokens():
                 return self.get_thermostats()
             else:
-                log.error("pyecobee: not authenticated to Ecobee servers")
-                log.error("request status code: %s" % request.status_code)
+                log.error("pyecobee::get_thermostats(): refresh_tokens() failed.")
                 return None
 
     def get_thermostat(self, index):
@@ -193,8 +195,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set"
-                  " HVAC mode.  Refreshing tokens...")
+            log.error("Error connecting to Ecobee while attempting to set HVAC mode.  Refreshing tokens...")
             self.refresh_tokens()
 
     def set_hvac_mode_id(self, id, hvac_mode):
@@ -212,8 +213,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set"
-                  " HVAC mode.  Refreshing tokens...")
+            log.error("Error connecting to Ecobee while attempting to set HVAC mode.  Refreshing tokens...")
             self.refresh_tokens()
 
 
@@ -234,8 +234,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set"
-                  " hold temp.  Refreshing tokens...")
+            log.error("Error connecting to Ecobee while attempting to set hold temp.  Refreshing tokens...")
             self.refresh_tokens()
 
     def set_hold_temp_id(self, id, cool_temp, heat_temp,
@@ -255,8 +254,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set"
-                  " hold temp.  Refreshing tokens...")
+            log.error("Error connecting to Ecobee while attempting to set hold temp.  Refreshing tokens...")
             self.refresh_tokens()
 
     def set_climate_hold(self, index, climate, hold_type="nextTransition"):
@@ -274,8 +272,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set"
-                  " climate hold.  Refreshing tokens...")
+            log.error("Error connecting to Ecobee while attempting to set climate hold.  Refreshing tokens...")
             self.refresh_tokens()
 
     def resume_program_id(self, id, resume_all="false"):
@@ -293,8 +290,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to resume"
-                  " program.  Refreshing tokens...")
+            log.error("Error connecting to Ecobee while attempting to resume program.  Refreshing tokens...")
             self.refresh_tokens()
 
     def resume_program(self, index, resume_all="false"):
@@ -312,8 +308,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to resume"
-                  " program.  Refreshing tokens...")
+            log.error("Error connecting to Ecobee while attempting to resume program.  Refreshing tokens...")
             self.refresh_tokens()
 
     def write_tokens_to_file(self):
