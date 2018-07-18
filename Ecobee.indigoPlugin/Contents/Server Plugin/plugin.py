@@ -379,7 +379,7 @@ class Plugin(indigo.PluginBase):
 					# self._refreshStatesFromHardware(dev, False, False)
 				self.updateAllDevices()
 
-				self.sleep(15)
+				self.sleep(10)
 				if self.ecobee.authenticated:
 					self.ecobee.update()
 					# We need to also re-save the authentication credentials now, since self.ecobee.update() may change them
