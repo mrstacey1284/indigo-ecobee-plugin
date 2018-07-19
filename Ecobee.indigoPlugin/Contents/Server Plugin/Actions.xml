@@ -1,30 +1,40 @@
 <?xml version="1.0"?>
 <!-- By default the thermostat type devices will inherit all
-	 ThermostatAction actions, which will be dispatched to
-	 the actionControlThermostat() method defined in plugin.py.
-	 
-	 Additional custom actions can also be defined here. The
-	 example below defines a custom action to modify the brightness
-	 of the backlit display of the module, and to modify the custom
-	 backlightBrightness state added to Devices.xml.
+     ThermostatAction actions, which will be dispatched to
+     the actionControlThermostat() method defined in plugin.py.
+     
+     Additional custom actions can also be defined here. The
+     example below defines a custom action to modify the brightness
+     of the backlit display of the module, and to modify the custom
+     backlightBrightness state added to Devices.xml.
 -->
 <Actions>
-	<Action id="setAwayStatus" deviceFilter="self">
-		<Name>Set Away Status</Name>
-		<CallbackMethod>setAwayStatus</CallbackMethod>
-		<ConfigUI>
-			<Field id="away" type="checkbox" defaultValue="false">
-				<Label>I am away:</Label>
-			</Field>
-		</ConfigUI>
-	</Action>
-	<Action id="resumeProgram" deviceFilter="self">
-		<Name>Resume Set Program</Name>
-		<CallbackMethod>actionResumeProgram</CallbackMethod>
-		<ConfigUI>
-			<Field id="resume_all" type="checkbox" defaultValue="false">
-				<Label>Resume All Holds:</Label>
-			</Field>
-		</ConfigUI>
-	</Action>
+    <Action id="setAwayStatus" deviceFilter="self">
+        <Name>Set Away Status</Name>
+        <CallbackMethod>setAwayStatus</CallbackMethod>
+        <ConfigUI>
+            <Field id="away" type="checkbox" defaultValue="false">
+                <Label>I am away:</Label>
+            </Field>
+        </ConfigUI>
+    </Action>
+    <Action id="resumeProgram" deviceFilter="self">
+        <Name>Resume Set Program</Name>
+        <CallbackMethod>actionResumeProgram</CallbackMethod>
+        <ConfigUI>
+            <Field id="resume_all" type="checkbox" defaultValue="false">
+                <Label>Resume All Holds:</Label>
+            </Field>
+        </ConfigUI>
+    </Action>
+    <Action id="activateComfortSetting" deviceFilter="self">
+        <Name>Activate Comfort Setting</Name>
+        <CallbackMethod>actionActivateComfortSetting</CallbackMethod>
+        <ConfigUI>
+            <Field id="climate" type="menu">
+                <Label>Comfort Setting:</Label>
+                 <List class="self" filter="" method="climateListGenerator" dynamicReload="true"/>
+            </Field>
+        </ConfigUI>
+    </Action>
 </Actions>

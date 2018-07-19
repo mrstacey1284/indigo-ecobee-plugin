@@ -309,6 +309,25 @@ class Ecobee(object):
             log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
             self.refresh_tokens()
 
+    def set_climate_hold_id(self, id, climate, hold_type="nextTransition"):
+        ''' Set a climate hold - ie away, home, sleep '''
+        url = 'https://api.ecobee.com/1/thermostat'
+        header = {'Content-Type': 'application/json;charset=UTF-8', 'Authorization': 'Bearer ' + self.access_token}
+        params = {'format': 'json'}
+        body = ('{"functions":[{"type":"setHold","params":{"holdType":"'
+                + hold_type + '","holdClimateRef":"' + climate + '"}}],'
+                '"selection":{"selectionType":"thermostats","selectionMatch"'
+                ':"' + id  + '"}}')
+        request = requests.post(url, headers=header, params=params, data=body)
+        if request.status_code == requests.codes.ok:
+            self._invalidate_cache()
+            return request
+        else:
+            log.error("Error connecting to Ecobee while attempting to set climate hold.  Refreshing tokens...")
+            log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
+            self.refresh_tokens()
+
+
     def resume_program_id(self, id, resume_all="false"):
         ''' Resume currently scheduled program by ID '''
         url = 'https://api.ecobee.com/1/thermostat'
