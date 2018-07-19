@@ -339,25 +339,25 @@ class Plugin(indigo.PluginBase):
             indigo.server.log(u"Error, received unimplemented action.thermostatAction:%s" % action.thermostatAction, isError=True)
 
     def climateListGenerator(self, filter, valuesDict, typeId, targetId):                                                                                                                 
-		for t in self.active_thermostats:
-			if t.dev.id == targetId:
-				retList = get_climates(self.ecobee, t.dev.address)
-		return retList
+        for t in self.active_thermostats:
+            if t.dev.id == targetId:
+                retList = get_climates(self.ecobee, t.dev.address)
+        return retList
 
-	########################################
-	# Activate Comfort Setting callback
-	######################
-	def actionActivateComfortSetting(self, action, dev):
-		###### ACTIVATE COMFORT SETTING ######
-		climate = action.props.get("climate")
+    ########################################
+    # Activate Comfort Setting callback
+    ######################
+    def actionActivateComfortSetting(self, action, dev):
+        ###### ACTIVATE COMFORT SETTING ######
+        climate = action.props.get("climate")
 
-		sendSuccess = False
-		if self.ecobee.set_climate_hold_id(dev.pluginProps["address"], climate) :
-			sendSuccess = True;
-			if sendSuccess:
-				indigo.server.log(u"sent set_climate_hold to %s" % dev.address)
-			else:
-				indigo.server.log(u"Failed to send set_climate_hold to %s" % dev.address, isError=True)
+        sendSuccess = False
+        if self.ecobee.set_climate_hold_id(dev.pluginProps["address"], climate) :
+            sendSuccess = True;
+            if sendSuccess:
+                indigo.server.log(u"sent set_climate_hold to %s" % dev.address)
+            else:
+                indigo.server.log(u"Failed to send set_climate_hold to %s" % dev.address, isError=True)
         return sendSuccess
 
  
