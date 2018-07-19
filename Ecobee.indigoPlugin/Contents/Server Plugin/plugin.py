@@ -296,8 +296,8 @@ class Plugin(indigo.PluginBase):
             self._handleChangeHvacModeAction(dev, action.actionMode)
 
         ###### SET FAN MODE ######
-        #elif action.thermostatAction == indigo.kThermostatAction.SetFanMode:
-            # self._handleChangeFanModeAction(dev, action.actionMode)
+        elif action.thermostatAction == indigo.kThermostatAction.SetFanMode:
+            self._handleChangeFanModeAction(dev, action.actionMode, u"set fan hold", u"hvacFanIsOn")
 
         ###### SET COOL SETPOINT ######
         elif action.thermostatAction == indigo.kThermostatAction.SetCoolSetpoint:
@@ -333,6 +333,11 @@ class Plugin(indigo.PluginBase):
         # indigo.kThermostatAction.RequestDeadbands, indigo.kThermostatAction.RequestSetpoints]:
         #   self._refreshStatesFromHardware(dev, True, False)
 
+        ###### UNTRAPPED CONDITIONS ######
+        # Explicitly show when nothing matches, indicates errors and unimplemented actions instead of quietly swallowing them
+        else:
+            indigo.server.log(u"Error, received unimplemented action.thermostatAction:%s" % action.thermostatAction, isError=True)
+
     ########################################
     # Resume Program callback
     ######################
@@ -350,6 +355,7 @@ class Plugin(indigo.PluginBase):
                 indigo.server.log(u"sent resume_program to %s" % dev.address)
             else:
                 indigo.server.log(u"Failed to send resume_program to %s" % dev.address, isError=True)
+            return sendSuccess
 
         ######################
     # Process action request from Indigo Server to change main thermostat's main mode.
@@ -407,3 +413,34 @@ class Plugin(indigo.PluginBase):
             # Else log failure but do NOT update state on Indigo Server.
             indigo.server.log(u"send \"%s\" %s to %.1f° failed" % (dev.name, logActionName, newSetpoint), isError=True)
 
+    ######################
+    # Process action request from Indigo Server to change fan mode.
+    def _handleChangeFanModeAction(self, dev, requestedFanMode, logActionName, stateKey):
+        newFanMode = kFanModeEnumToStrMap.get(requestedFanMode, u"auto")
+        #   the scale is in whatever units configured in the pluginPrefs
+        scale = self.pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF]
+        self.debugLog('scale in use is {0}'.format(scale))
+        #   enforce minima/maxima based on the scale in use by the plugin
+        sendSuccess = False
+        #   Normalize units for consistent reporting
+        reportedHSP = '{0}{1}'.format(dev.heatSetpoint,scale)
+        reportedCSP = '{0}{1}'.format(dev.coolSetpoint,scale)
+
+        if newFanMode == u"on":
+            indigo.server.log('leave cool at: {0} and leave heat at: {1} and set fan to ON'.format(reportedCSP,reportedHSP))
+            if self.ecobee.set_hold_temp_with_fan_id(dev.address, dev.coolSetpoint, dev.heatSetpoint):
+                sendSuccess = True
+
+        if newFanMode == u"auto":
+            indigo.server.log('resume normal program to set fan to OFF')
+            if self._resumeProgram(dev, "true"):
+                sendSuccess = True
+
+        if sendSuccess:
+            indigo.server.log(u"sent \"%s\" %s to %s" % (dev.name, logActionName, newFanMode))
+            # And then tell the Indigo Server to update the state.
+            if stateKey in dev.states:
+                dev.updateStateOnServer(stateKey, requestedFanMode, uiValue="True")
+        else:
+            # Else log failure but do NOT update state on Indigo Server.
+            indigo.server.log(u"send \"%s\" %s to %s failed" % (dev.name, logActionName, newFanMode), isError=True)

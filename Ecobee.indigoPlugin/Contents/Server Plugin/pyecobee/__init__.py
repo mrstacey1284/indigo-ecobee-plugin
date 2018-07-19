@@ -142,7 +142,7 @@ class Ecobee(object):
             log.debug("returning cached thermostat information; %.0f seconds until cache expiration" % seconds_remaining)
             return self.thermostats
 
-        log.info("getting thermostats via ecobee API")
+        log.debug("getting thermostats via ecobee API")
 
         ''' Set self.thermostats to a json list of thermostats from ecobee '''
         url = 'https://api.ecobee.com/1/thermostat'
@@ -163,12 +163,18 @@ class Ecobee(object):
             
         elif request.status_code > 500:    # server issue, just try again later     
             log.error("pyecobee::get_thermostats(): Error connecting to Ecobee while attempting to get thermostat data")
-            log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
+            try:
+                log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
+            except:
+                log.error("Status code = {}".format(request.status_code))
         
         else:
             self.authenticated = False
             log.error("pyecobee::get_thermostats(): Error connecting to Ecobee while attempting to get thermostat data")
-            log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
+            try:
+                log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
+            except:
+                log.error("Status code = {}".format(request.status_code))
             if self.refresh_tokens():
                 return self.get_thermostats()
             else:
@@ -263,6 +269,26 @@ class Ecobee(object):
             log.error("Error connecting to Ecobee while attempting to set hold temp.  Refreshing tokens...")
             log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
             self.refresh_tokens()
+
+    def set_hold_temp_with_fan_id(self, id, cool_temp, heat_temp, hold_type="nextTransition"):
+        ''' Set a fan hold '''
+        url = 'https://api.ecobee.com/1/thermostat'
+        header = {'Content-Type': 'application/json;charset=UTF-8','Authorization': 'Bearer ' + self.access_token}
+        params = {'format': 'json'}
+        body = ('{"functions":[{"type":"setHold","params":{"holdType":"' + hold_type +
+               '","coolHoldTemp":"' + str(int(cool_temp * 10)) +
+                '","heatHoldTemp":"' + str(int(heat_temp * 10)) +
+                '","fan": "on"}}],'
+                '"selection":{"selectionType":"thermostats","selectionMatch"'
+                ':"' + id + '"}}')
+        request = requests.post(url, headers=header, params=params, data=body)
+        if request.status_code == requests.codes.ok:
+            self._invalidate_cache()
+            return request
+        else:
+            log.warning("Error connecting to Ecobee while attempting to turn fan on.  Refreshing tokens...")
+            self.refresh_tokens()
+
 
     def set_climate_hold(self, index, climate, hold_type="nextTransition"):
         ''' Set a climate hold - ie away, home, sleep '''
