@@ -11,6 +11,12 @@
 			<Option value="R">Rankine</Option>
 		</List>
 	</Field>
+    <Field id="updateFrequency" type="textfield" defaultValue="60">
+        <Label>Update frequency (minutes):</Label>
+    </Field>
+    <Field id="statusNote" type="label" fontSize="small" fontColor="darkgray">
+        <Label>Minimum update interval is 15 seconds.  Default is 60.</Label>
+    </Field>
 	<Field id ="debuggingEnabled" type="menu">
 		<Label>Debug logging enabled:</Label>
 		<List>

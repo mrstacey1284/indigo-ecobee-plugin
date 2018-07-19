@@ -4,6 +4,7 @@
 import pyecobee
 import sys
 import json
+import time
 import indigo
 from ecobee_devices import *
 import temperature_scale
@@ -21,370 +22,388 @@ TEMPERATURE_SCALE_PLUGIN_PREF='temperatureScale'
 
 
 TEMP_FORMATTERS = {
-	'F': temperature_scale.Fahrenheit(),
-	'C': temperature_scale.Celsius(),
-	'K': temperature_scale.Kelvin(),
-	'R': temperature_scale.Rankine()
+    'F': temperature_scale.Fahrenheit(),
+    'C': temperature_scale.Celsius(),
+    'K': temperature_scale.Kelvin(),
+    'R': temperature_scale.Rankine()
 }
 
-#	PLugin-enforced minimum and maximum setpoint
-#	ranges per temperature scale
+#   PLugin-enforced minimum and maximum setpoint
+#   ranges per temperature scale
 ALLOWED_RANGE = {
-	'F': (40,95),
-	'C': (6,35),
-	'K': (277,308),
-	'R': (500,555)
+    'F': (40,95),
+    'C': (6,35),
+    'K': (277,308),
+    'R': (500,555)
 }
+
+REFRESH_INTERVAL = 45.0 * 60.0
 
 # constrain a value to a range
 def clamp(n, minn, maxn): return min(max(n, minn), maxn)
 
 class Plugin(indigo.PluginBase):
 
-	def __init__(self, pluginId, pluginDisplayName, pluginVersion, pluginPrefs):
-		indigo.PluginBase.__init__(self, pluginId, pluginDisplayName, pluginVersion, pluginPrefs)
-		self.debug = DEBUG
+    def __init__(self, pluginId, pluginDisplayName, pluginVersion, pluginPrefs):
+        indigo.PluginBase.__init__(self, pluginId, pluginDisplayName, pluginVersion, pluginPrefs)
+        self.debug = DEBUG
 
-		self.active_remote_sensors = []
-		self.active_thermostats = []
-		self.active_smart_thermostats = []
+        self.active_remote_sensors = []
+        self.active_thermostats = []
+        self.active_smart_thermostats = []
 
-		logHandler = IndigoLoggingHandler(self)
+        logHandler = IndigoLoggingHandler(self)
 
-		pyecobeeLogger = logging.getLogger('pyecobee')
-		pyecobeeLogger.addHandler(logHandler)
-		self.log = logging.getLogger('indigo.ecobee.plugin')
-		self.log.addHandler(logHandler)
+        pyecobeeLogger = logging.getLogger('pyecobee')
+        pyecobeeLogger.addHandler(logHandler)
+        self.log = logging.getLogger('indigo.ecobee.plugin')
+        self.log.addHandler(logHandler)
 
-		if DEBUG:
-			pyecobeeLogger.setLevel(logging.DEBUG)
-			self.log.setLevel(logging.DEBUG)
-		else:
-			pyecobeeLogger.setLevel(logging.ERROR)
-			self.log.setLevel(logging.WARNING)
+        if DEBUG:
+            pyecobeeLogger.setLevel(logging.DEBUG)
+            self.log.setLevel(logging.DEBUG)
+        else:
+            pyecobeeLogger.setLevel(logging.INFO)
+            self.log.setLevel(logging.INFO)
 
-		if TEMPERATURE_SCALE_PLUGIN_PREF in pluginPrefs:
-			self._setTemperatureScale(pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF][0])
-		else:
-			self._setTemperatureScale('F')
+        if TEMPERATURE_SCALE_PLUGIN_PREF in pluginPrefs:
+            self._setTemperatureScale(pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF][0])
+        else:
+            self._setTemperatureScale('F')
 
-		tmpconfig = {'API_KEY': "qyy0od74EpMz2P8X1fmAfyoxKod4t1Fo"}
-		if ACCESS_TOKEN_PLUGIN_PREF in pluginPrefs:
-			tmpconfig['ACCESS_TOKEN'] = pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF]
-		if AUTHORIZATION_CODE_PLUGIN_PREF in pluginPrefs:
-			tmpconfig['AUTHORIZATION_CODE'] = pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF]
-		if REFRESH_TOKEN_PLUGIN_PREF in pluginPrefs:
-			tmpconfig['REFRESH_TOKEN'] = pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF]
-		self.debugLog(u"constructed pyecobee config: %s" % json.dumps(tmpconfig))
-		# Create an ecobee object with the config dictionary
-		self.ecobee = pyecobee.Ecobee(config = tmpconfig)
+        tmpconfig = {'API_KEY': "qyy0od74EpMz2P8X1fmAfyoxKod4t1Fo"}
+        if ACCESS_TOKEN_PLUGIN_PREF in pluginPrefs:
+            tmpconfig['ACCESS_TOKEN'] = pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF]
+        if AUTHORIZATION_CODE_PLUGIN_PREF in pluginPrefs:
+            tmpconfig['AUTHORIZATION_CODE'] = pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF]
+        if REFRESH_TOKEN_PLUGIN_PREF in pluginPrefs:
+            tmpconfig['REFRESH_TOKEN'] = pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF]
+        self.debugLog(u"constructed pyecobee config: %s" % json.dumps(tmpconfig))
+        # Create an ecobee object with the config dictionary
+        self.ecobee = pyecobee.Ecobee(config = tmpconfig)
 
-		self.pluginPrefs["pin"] = self.ecobee.pin
-		if self.ecobee.authenticated:
-			self.pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF] = self.ecobee.access_token
-			self.pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF] = self.ecobee.authorization_code
-			self.pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF] = self.ecobee.refresh_token
-		if self.ecobee.refresh_token == '':
-			self.pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF] = ''
-			self.pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF] = ''
-			self.pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF] = ''
-			self.errorLog('Ecobee device requires authentication; open plugin configuration page for info')
-
-
-	def __del__(self):
-		indigo.PluginBase.__del__(self)
-
-	def validatePrefsConfigUi(self, valuesDict):
-		scaleInfo = valuesDict[TEMPERATURE_SCALE_PLUGIN_PREF]
-		self._setTemperatureScale(scaleInfo[0])
-		self.update_logging(bool(valuesDict['debuggingEnabled'] and "y" == valuesDict['debuggingEnabled']))
-		return True
-
-	#	constrain a setpoint the range
-	#	based on temperature scale in use by the plugin
-	def _constrainSetpoint(self, value):
-		allowedRange = ALLOWED_RANGE[self.pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF]]
-		return clamp(value,allowedRange[0],allowedRange[1])
-
-	#	convert value (in the plugin-defined scale)
-	#	to Fahrenheit
-	def _toFahrenheit(self,value):
-		scale = self.pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF]
-		if scale == 'C':
-			return (9 * value)/5 + 32
-		elif scale == 'K':
-			return (9 * value)/5 - 459.67
-		elif scale == 'R':
-			return 459.67
-		return value
-
-	def _setTemperatureScale(self, value):
-		self.log.debug(u'setting temperature scale to %s' % value)
-		EcobeeBase.temperatureFormatter = TEMP_FORMATTERS.get(value)
-
-	def update_logging(self, is_debug):
-		if is_debug:
-			self.debug = True
-			self.log.setLevel(logging.DEBUG)
-			logging.getLogger("indigo.ecobee.plugin").setLevel(logging.DEBUG)
-			self.log.debug("debug logging enabled")
-		else:
-			self.log.debug("debug logging disabled")
-			self.debug=False
-			self.log.setLevel(logging.INFO)
-			logging.getLogger("indigo.ecobee.plugin").setLevel(logging.INFO)
+        self.pluginPrefs["pin"] = self.ecobee.pin
+        if self.ecobee.authenticated:
+            self.pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF] = self.ecobee.access_token
+            self.pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF] = self.ecobee.authorization_code
+            self.pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF] = self.ecobee.refresh_token
+        if self.ecobee.refresh_token == '':
+            self.pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF] = ''
+            self.pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF] = ''
+            self.pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF] = ''
+            self.errorLog('Ecobee device requires authentication; open plugin configuration page for info')
 
 
-	def startup(self):
-		self.debugLog(u"startup called")
+    def __del__(self):
+        indigo.PluginBase.__del__(self)
 
-	def shutdown(self):
-		self.debugLog(u"shutdown called")
+    def validatePrefsConfigUi(self, valuesDict):
+        scaleInfo = valuesDict[TEMPERATURE_SCALE_PLUGIN_PREF]
+        self._setTemperatureScale(scaleInfo[0])
+        self.update_logging(bool(valuesDict['debuggingEnabled'] and "y" == valuesDict['debuggingEnabled']))
+        return True
 
-	def request_pin(self, valuesDict = None):
+    #   constrain a setpoint the range
+    #   based on temperature scale in use by the plugin
+    def _constrainSetpoint(self, value):
+        allowedRange = ALLOWED_RANGE[self.pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF]]
+        return clamp(value,allowedRange[0],allowedRange[1])
 
-		valuesDict[ACCESS_TOKEN_PLUGIN_PREF] = ''
-		valuesDict[AUTHORIZATION_CODE_PLUGIN_PREF] = ''
-		valuesDict[REFRESH_TOKEN_PLUGIN_PREF] = ''
+    #   convert value (in the plugin-defined scale)
+    #   to Fahrenheit
+    def _toFahrenheit(self,value):
+        scale = self.pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF]
+        if scale == 'C':
+            return (9 * value)/5 + 32
+        elif scale == 'K':
+            return (9 * value)/5 - 459.67
+        elif scale == 'R':
+            return 459.67
+        return value
 
-		self.ecobee.request_pin()
-		self.debugLog(u"received pin: %s" % self.ecobee.pin)
-		valuesDict['pin'] = self.ecobee.pin
-		return valuesDict
+    def _setTemperatureScale(self, value):
+        self.log.debug(u'setting temperature scale to %s' % value)
+        EcobeeBase.temperatureFormatter = TEMP_FORMATTERS.get(value)
 
-	def open_browser_to_ecobee(self, valuesDict = None):
-		self.browserOpen("http://www.ecobee.com")
+    def update_logging(self, is_debug):
+        if is_debug:
+            self.debug = True
+            self.log.setLevel(logging.DEBUG)
+            logging.getLogger("indigo.ecobee.plugin").setLevel(logging.DEBUG)
+            self.log.debug("debug logging enabled")
+        else:
+            self.log.debug("debug logging disabled")
+            self.debug=False
+            self.log.setLevel(logging.INFO)
+            logging.getLogger("indigo.ecobee.plugin").setLevel(logging.INFO)
+    
 
-	def refresh_credentials(self, valuesDict = None):
-		self.ecobee.request_tokens()
-		self._get_keys_from_ecobee(valuesDict)
-		if self.ecobee.authenticated:
-			self.updateAllDevices()
-		return valuesDict
+    def startup(self):
+        indigo.server.log(u"Starting Ecobee")
 
-	def get_thermostats(self, filter="", valuesDict=None, typeId="", targetId=0):
-		return get_thermostats(self.ecobee)
+        self.updateFrequency = float(self.pluginPrefs.get('updateFrequency', "15"))
+        self.logger.debug(u"updateFrequency = " + str(self.updateFrequency))
+        self.next_update = time.time()
 
-	def get_remote_sensors(self, filter="", valuesDict=None, typeId="", targetId=0):
-		return get_remote_sensors(self.ecobee)
+        self.next_refresh = time.time() + REFRESH_INTERVAL
 
-	def _get_keys_from_ecobee(self, valuesDict):
-		valuesDict[ACCESS_TOKEN_PLUGIN_PREF] = self.ecobee.access_token
-		valuesDict[AUTHORIZATION_CODE_PLUGIN_PREF] = self.ecobee.authorization_code
-		valuesDict[REFRESH_TOKEN_PLUGIN_PREF] = self.ecobee.refresh_token
-		return valuesDict
+    def shutdown(self):
+        indigo.server.log(u"Stopping Ecobee")
+        
+        
+    def runConcurrentThread(self):
+        try:
+            while True:
 
-	def deviceStartComm(self, dev):
-		dev.stateListOrDisplayStateIdChanged() # in case any states added/removed after plugin upgrade
+                if time.time() > self.next_update:
+                    self.updateAllDevices()
+                    self.next_update = time.time() + self.updateFrequency
 
-#		self.debugLog('deviceStartComm: %s' % dev)
-		if dev.model == 'Ecobee Remote Sensor':
-			self.debugLog("deviceStartComm: creating EcobeeRemoteSensor")
-			newDevice = EcobeeRemoteSensor(dev.pluginProps["address"], dev, self.ecobee)
-			self.active_remote_sensors.append(newDevice)
+                if time.time() > self.next_refresh:
+                    self.ecobee.refresh_tokens()
+                    self.pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF] = self.ecobee.access_token
+                    self.pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF] = self.ecobee.authorization_code
+                    self.pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF] = self.ecobee.refresh_token
+                    self.next_refresh = time.time() + REFRESH_INTERVAL
 
-			# set icon to 'temperature sensor'
-			dev.updateStateImageOnServer(indigo.kStateImageSel.TemperatureSensor)
+                if self.ecobee.authenticated:
+                    self.ecobee.update()
+                    # We need to also re-save the authentication credentials now, since self.ecobee.update() may change them
+                    self.pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF] = self.ecobee.access_token
+                    self.pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF] = self.ecobee.authorization_code
+                    self.pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF] = self.ecobee.refresh_token
 
-			indigo.server.log("added remote sensor %s" % dev.pluginProps["address"])
 
-		elif dev.model == 'Ecobee Thermostat':
-			# Add support for the thermostat's humidity sensor
-			newProps = dev.pluginProps
-			newProps["NumHumidityInputs"] = 1
-			newProps["NumTemperatureInputs"] = 2
-			# SHENANIGANS: the following property has to be set in order for us to report
-			#   whether the thermostat is presently heating, cooling, etc.
-			#   This was difficult to find.
-			newProps["ShowCoolHeatEquipmentStateUI"] = True
-			dev.replacePluginPropsOnServer(newProps)
-			newDevice = EcobeeThermostat(dev.pluginProps["address"], dev, self.ecobee)
-			self.active_thermostats.append(newDevice)
-			indigo.server.log("added thermostat %s" % dev.pluginProps["address"])
+                self.sleep(15.0)
 
-		elif dev.model == 'Ecobee Smart Thermostat':
-			# Add support for the thermostat's humidity sensor
-			newProps = dev.pluginProps
-			newProps["NumHumidityInputs"] = 1
-			# SHENANIGANS: the following property has to be set in order for us to report
-			#   whether the thermostat is presently heating, cooling, etc.
-			#   This was difficult to find.
-			newProps["ShowCoolHeatEquipmentStateUI"] = True
-			dev.replacePluginPropsOnServer(newProps)
-			newDevice = EcobeeSmartThermostat(dev.pluginProps["address"], dev, self.ecobee)
-			self.active_smart_thermostats.append(newDevice)
-			indigo.server.log("added smart thermostat %s" % dev.pluginProps["address"])
+        except self.StopThread:
+            pass
 
-		# TODO: try to set initial name for new devices, as other plugins do.
-		# However, this doesn't work yet. Sad clown.
-		self.debugLog('device name: %s  ecobee name: %s' % (dev.name, newDevice.name))
-		if dev.name == 'new device' and newDevice.name:
-			dev.name = newDevice.name
-			dev.replaceOnServer()
-			self.debugLog('device name set to %s' % dev.name)
+    def request_pin(self, valuesDict = None):
 
-	def deviceStopComm(self, dev):
-		if dev.model == 'Ecobee Remote Sensor':
-			self.active_remote_sensors = [
-				rs for rs in self.active_remote_sensors
-					if rs.address != dev.pluginProps["address"]
-			]
-		elif dev.model == 'Ecobee Thermostat':
-			self.active_thermostats = [
-				t for t in self.active_thermostats
-					if t.address != dev.pluginProps["address"]
-			]
-		elif dev.model == 'Ecobee Smart Thermostat':
-			self.active_smart_thermostats = [
-				st for st in self.active_smart_thermostats
-					if st.address != dev.pluginProps["address"]
-			]
+        valuesDict[ACCESS_TOKEN_PLUGIN_PREF] = ''
+        valuesDict[AUTHORIZATION_CODE_PLUGIN_PREF] = ''
+        valuesDict[REFRESH_TOKEN_PLUGIN_PREF] = ''
 
-	def updateAllDevices(self):
-		for ers in self.active_remote_sensors:
-			ers.updateServer()
-		for t in self.active_thermostats:
-			t.updateServer()
-		for st in self.active_smart_thermostats:
-			st.updateServer()
+        self.ecobee.request_pin()
+        self.debugLog(u"received pin: %s" % self.ecobee.pin)
+        valuesDict['pin'] = self.ecobee.pin
+        return valuesDict
 
-	########################################
-	# Thermostat Action callback
-	######################
-	# Main thermostat action bottleneck called by Indigo Server.
-	def actionControlThermostat(self, action, dev):
-		###### SET HVAC MODE ######
-		if action.thermostatAction == indigo.kThermostatAction.SetHvacMode:
-			self._handleChangeHvacModeAction(dev, action.actionMode)
+    def open_browser_to_ecobee(self, valuesDict = None):
+        self.browserOpen("http://www.ecobee.com")
 
-		###### SET FAN MODE ######
-		#elif action.thermostatAction == indigo.kThermostatAction.SetFanMode:
-			# self._handleChangeFanModeAction(dev, action.actionMode)
+    def refresh_credentials(self, valuesDict = None):
+        self.ecobee.request_tokens()
+        self._get_keys_from_ecobee(valuesDict)
+        if self.ecobee.authenticated:
+            self.updateAllDevices()
+        return valuesDict
 
-		###### SET COOL SETPOINT ######
-		elif action.thermostatAction == indigo.kThermostatAction.SetCoolSetpoint:
-			newSetpoint = action.actionValue
-			self._handleChangeSetpointAction(dev, newSetpoint, u"change cool setpoint", u"setpointCool")
+    def get_thermostats(self, filter="", valuesDict=None, typeId="", targetId=0):
+        return get_thermostats(self.ecobee)
 
-		###### SET HEAT SETPOINT ######
-		elif action.thermostatAction == indigo.kThermostatAction.SetHeatSetpoint:
-			newSetpoint = action.actionValue
-			self._handleChangeSetpointAction(dev, newSetpoint, u"change heat setpoint", u"setpointHeat")
+    def get_remote_sensors(self, filter="", valuesDict=None, typeId="", targetId=0):
+        return get_remote_sensors(self.ecobee)
 
-		###### DECREASE/INCREASE COOL SETPOINT ######
-		elif action.thermostatAction == indigo.kThermostatAction.DecreaseCoolSetpoint:
-			newSetpoint = dev.coolSetpoint - action.actionValue
-			self._handleChangeSetpointAction(dev, newSetpoint, u"decrease cool setpoint", u"setpointCool")
+    def _get_keys_from_ecobee(self, valuesDict):
+        valuesDict[ACCESS_TOKEN_PLUGIN_PREF] = self.ecobee.access_token
+        valuesDict[AUTHORIZATION_CODE_PLUGIN_PREF] = self.ecobee.authorization_code
+        valuesDict[REFRESH_TOKEN_PLUGIN_PREF] = self.ecobee.refresh_token
+        return valuesDict
 
-		elif action.thermostatAction == indigo.kThermostatAction.IncreaseCoolSetpoint:
-			newSetpoint = dev.coolSetpoint + action.actionValue
-			self._handleChangeSetpointAction(dev, newSetpoint, u"increase cool setpoint", u"setpointCool")
+    def deviceStartComm(self, dev):
+        dev.stateListOrDisplayStateIdChanged() # in case any states added/removed after plugin upgrade
 
-		###### DECREASE/INCREASE HEAT SETPOINT ######
-		elif action.thermostatAction == indigo.kThermostatAction.DecreaseHeatSetpoint:
-			newSetpoint = dev.heatSetpoint - action.actionValue
-			self._handleChangeSetpointAction(dev, newSetpoint, u"decrease heat setpoint", u"setpointHeat")
+#       self.debugLog('deviceStartComm: %s' % dev)
+        if dev.model == 'Ecobee Remote Sensor':
+            self.debugLog("deviceStartComm: creating EcobeeRemoteSensor")
+            newDevice = EcobeeRemoteSensor(dev.pluginProps["address"], dev, self.ecobee)
+            self.active_remote_sensors.append(newDevice)
 
-		elif action.thermostatAction == indigo.kThermostatAction.IncreaseHeatSetpoint:
-			newSetpoint = dev.heatSetpoint + action.actionValue
-			self._handleChangeSetpointAction(dev, newSetpoint, u"increase heat setpoint", u"setpointHeat")
+            # set icon to 'temperature sensor'
+            dev.updateStateImageOnServer(indigo.kStateImageSel.TemperatureSensor)
 
-		###### REQUEST STATE UPDATES ######
-		#elif action.thermostatAction in [indigo.kThermostatAction.RequestStatusAll, indigo.kThermostatAction.RequestMode,
-		# indigo.kThermostatAction.RequestEquipmentState, indigo.kThermostatAction.RequestTemperatures, indigo.kThermostatAction.RequestHumidities,
-		# indigo.kThermostatAction.RequestDeadbands, indigo.kThermostatAction.RequestSetpoints]:
-		#	self._refreshStatesFromHardware(dev, True, False)
+            indigo.server.log("added remote sensor %s" % dev.pluginProps["address"])
 
-	########################################
-	# Resume Program callback
-	######################
-	def actionResumeProgram(self, action, dev):
-		###### RESUME PROGRAM ######
-                resume_all = "false"
-                if action.props.get("resume_all"):
-                        resume_all = "true"
-                self._resumeProgram(dev, resume_all)
+        elif dev.model == 'Ecobee Thermostat':
+            # Add support for the thermostat's humidity sensor
+            newProps = dev.pluginProps
+            newProps["NumHumidityInputs"] = 1
+            newProps["NumTemperatureInputs"] = 2
+            # SHENANIGANS: the following property has to be set in order for us to report
+            #   whether the thermostat is presently heating, cooling, etc.
+            #   This was difficult to find.
+            newProps["ShowCoolHeatEquipmentStateUI"] = True
+            dev.replacePluginPropsOnServer(newProps)
+            newDevice = EcobeeThermostat(dev.pluginProps["address"], dev, self.ecobee)
+            self.active_thermostats.append(newDevice)
+            indigo.server.log("added thermostat %s" % dev.pluginProps["address"])
+
+        elif dev.model == 'Ecobee Smart Thermostat':
+            # Add support for the thermostat's humidity sensor
+            newProps = dev.pluginProps
+            newProps["NumHumidityInputs"] = 1
+            # SHENANIGANS: the following property has to be set in order for us to report
+            #   whether the thermostat is presently heating, cooling, etc.
+            #   This was difficult to find.
+            newProps["ShowCoolHeatEquipmentStateUI"] = True
+            dev.replacePluginPropsOnServer(newProps)
+            newDevice = EcobeeSmartThermostat(dev.pluginProps["address"], dev, self.ecobee)
+            self.active_smart_thermostats.append(newDevice)
+            indigo.server.log("added smart thermostat %s" % dev.pluginProps["address"])
+
+        # TODO: try to set initial name for new devices, as other plugins do.
+        # However, this doesn't work yet. Sad clown.
+        self.debugLog('device name: %s  ecobee name: %s' % (dev.name, newDevice.name))
+        if dev.name == 'new device' and newDevice.name:
+            dev.name = newDevice.name
+            dev.replaceOnServer()
+            self.debugLog('device name set to %s' % dev.name)
+
+    def deviceStopComm(self, dev):
+        if dev.model == 'Ecobee Remote Sensor':
+            self.active_remote_sensors = [
+                rs for rs in self.active_remote_sensors
+                    if rs.address != dev.pluginProps["address"]
+            ]
+        elif dev.model == 'Ecobee Thermostat':
+            self.active_thermostats = [
+                t for t in self.active_thermostats
+                    if t.address != dev.pluginProps["address"]
+            ]
+        elif dev.model == 'Ecobee Smart Thermostat':
+            self.active_smart_thermostats = [
+                st for st in self.active_smart_thermostats
+                    if st.address != dev.pluginProps["address"]
+            ]
+
+    def updateAllDevices(self):
+        for ers in self.active_remote_sensors:
+            ers.updateServer()
+        for t in self.active_thermostats:
+            t.updateServer()
+        for st in self.active_smart_thermostats:
+            st.updateServer()
+
+    ########################################
+    # Thermostat Action callback
+    ######################
+    # Main thermostat action bottleneck called by Indigo Server.
+    def actionControlThermostat(self, action, dev):
+        ###### SET HVAC MODE ######
+        if action.thermostatAction == indigo.kThermostatAction.SetHvacMode:
+            self._handleChangeHvacModeAction(dev, action.actionMode)
+
+        ###### SET FAN MODE ######
+        #elif action.thermostatAction == indigo.kThermostatAction.SetFanMode:
+            # self._handleChangeFanModeAction(dev, action.actionMode)
+
+        ###### SET COOL SETPOINT ######
+        elif action.thermostatAction == indigo.kThermostatAction.SetCoolSetpoint:
+            newSetpoint = action.actionValue
+            self._handleChangeSetpointAction(dev, newSetpoint, u"change cool setpoint", u"setpointCool")
+
+        ###### SET HEAT SETPOINT ######
+        elif action.thermostatAction == indigo.kThermostatAction.SetHeatSetpoint:
+            newSetpoint = action.actionValue
+            self._handleChangeSetpointAction(dev, newSetpoint, u"change heat setpoint", u"setpointHeat")
+
+        ###### DECREASE/INCREASE COOL SETPOINT ######
+        elif action.thermostatAction == indigo.kThermostatAction.DecreaseCoolSetpoint:
+            newSetpoint = dev.coolSetpoint - action.actionValue
+            self._handleChangeSetpointAction(dev, newSetpoint, u"decrease cool setpoint", u"setpointCool")
+
+        elif action.thermostatAction == indigo.kThermostatAction.IncreaseCoolSetpoint:
+            newSetpoint = dev.coolSetpoint + action.actionValue
+            self._handleChangeSetpointAction(dev, newSetpoint, u"increase cool setpoint", u"setpointCool")
+
+        ###### DECREASE/INCREASE HEAT SETPOINT ######
+        elif action.thermostatAction == indigo.kThermostatAction.DecreaseHeatSetpoint:
+            newSetpoint = dev.heatSetpoint - action.actionValue
+            self._handleChangeSetpointAction(dev, newSetpoint, u"decrease heat setpoint", u"setpointHeat")
+
+        elif action.thermostatAction == indigo.kThermostatAction.IncreaseHeatSetpoint:
+            newSetpoint = dev.heatSetpoint + action.actionValue
+            self._handleChangeSetpointAction(dev, newSetpoint, u"increase heat setpoint", u"setpointHeat")
+
+        ###### REQUEST STATE UPDATES ######
+        #elif action.thermostatAction in [indigo.kThermostatAction.RequestStatusAll, indigo.kThermostatAction.RequestMode,
+        # indigo.kThermostatAction.RequestEquipmentState, indigo.kThermostatAction.RequestTemperatures, indigo.kThermostatAction.RequestHumidities,
+        # indigo.kThermostatAction.RequestDeadbands, indigo.kThermostatAction.RequestSetpoints]:
+        #   self._refreshStatesFromHardware(dev, True, False)
+
+    ########################################
+    # Resume Program callback
+    ######################
+    def actionResumeProgram(self, action, dev):
+        resume_all = "false"
+        if action.props.get("resume_all"):
+            resume_all = "true"
+        self._resumeProgram(dev, resume_all)
 
         def _resumeProgram(self, dev, resume_all):
-                sendSuccess = False
-                if self.ecobee.resume_program_id(dev.pluginProps["address"], resume_all) :
-                        sendSuccess = True;
-                if sendSuccess:
-                        indigo.server.log(u"sent resume_program to %s" % dev.address)
-                else:
-                        indigo.server.log(u"Failed to send resume_program to %s" % dev.address, isError=True)
+            sendSuccess = False
+            if self.ecobee.resume_program_id(dev.pluginProps["address"], resume_all) :
+                sendSuccess = True;
+            if sendSuccess:
+                indigo.server.log(u"sent resume_program to %s" % dev.address)
+            else:
+                indigo.server.log(u"Failed to send resume_program to %s" % dev.address, isError=True)
 
         ######################
-	# Process action request from Indigo Server to change main thermostat's main mode.
-	def _handleChangeHvacModeAction(self, dev, newHvacMode):
-		hvac_mode = kHvacModeEnumToStrMap.get(newHvacMode, u"unknown")
-		indigo.server.log(u"mode: %s --> set to: %s" % (newHvacMode, kHvacModeEnumToStrMap.get(newHvacMode)))
- 		indigo.server.log(u"address: %s set to: %s" % (int(dev.address), kHvacModeEnumToStrMap.get(newHvacMode)))
+    # Process action request from Indigo Server to change main thermostat's main mode.
+    def _handleChangeHvacModeAction(self, dev, newHvacMode):
+        hvac_mode = kHvacModeEnumToStrMap.get(newHvacMode, u"unknown")
+        indigo.server.log(u"mode: %s --> set to: %s" % (newHvacMode, kHvacModeEnumToStrMap.get(newHvacMode)))
+        indigo.server.log(u"address: %s set to: %s" % (int(dev.address), kHvacModeEnumToStrMap.get(newHvacMode)))
 
-		sendSuccess = False
+        sendSuccess = False
 
-		if self.ecobee.set_hvac_mode_id(dev.pluginProps["address"], hvac_mode):
-			sendSuccess = True
+        if self.ecobee.set_hvac_mode_id(dev.pluginProps["address"], hvac_mode):
+            sendSuccess = True
 
-		if sendSuccess:
-			indigo.server.log(u"sent \"%s\" mode change to %s" % (dev.name, hvac_mode))
-			if "hvacOperationMode" in dev.states:
-				dev.updateStateOnServer("hvacOperationMode", newHvacMode)
-		else:
-			indigo.server.log(u"send \"%s\" mode change to %s failed" % (dev.name, hvac_mode), isError=True)
+        if sendSuccess:
+            indigo.server.log(u"sent \"%s\" mode change to %s" % (dev.name, hvac_mode))
+            if "hvacOperationMode" in dev.states:
+                dev.updateStateOnServer("hvacOperationMode", newHvacMode)
+        else:
+            indigo.server.log(u"send \"%s\" mode change to %s failed" % (dev.name, hvac_mode), isError=True)
 
-	######################
-	# Process action request from Indigo Server to change a cool/heat setpoint.
-	def _handleChangeSetpointAction(self, dev, newSetpoint, logActionName, stateKey):
-		oldNewSetpoint = newSetpoint
-		self.debugLog('newSetpoint is {}'.format(newSetpoint))
-		#	the newSetpoint is in whatever units configured in the pluginPrefs
-		scale = self.pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF]
-		self.debugLog('scale in use is {}'.format(scale))
-		#	enforce minima/maxima based on the scale in use by the plugin
-		newSetpoint = self._constrainSetpoint(newSetpoint)
-		#	API uses F scale
-		newSetpoint = self._toFahrenheit(newSetpoint)
-		sendSuccess = False
-		#	Normalize units for consistent reporting
-		reportedNewSetpoint = '{}{}'.format(oldNewSetpoint,scale)
-		reportedHSP = '{}{}'.format(dev.heatSetpoint,scale)
-		reportedCSP = '{}{}'.format(dev.heatSetpoint,scale)
+    ######################
+    # Process action request from Indigo Server to change a cool/heat setpoint.
+    def _handleChangeSetpointAction(self, dev, newSetpoint, logActionName, stateKey):
+        oldNewSetpoint = newSetpoint
+        self.debugLog('newSetpoint is {}'.format(newSetpoint))
+        #   the newSetpoint is in whatever units configured in the pluginPrefs
+        scale = self.pluginPrefs[TEMPERATURE_SCALE_PLUGIN_PREF]
+        self.debugLog('scale in use is {}'.format(scale))
+        #   enforce minima/maxima based on the scale in use by the plugin
+        newSetpoint = self._constrainSetpoint(newSetpoint)
+        #   API uses F scale
+        newSetpoint = self._toFahrenheit(newSetpoint)
+        sendSuccess = False
+        #   Normalize units for consistent reporting
+        reportedNewSetpoint = '{}{}'.format(oldNewSetpoint,scale)
+        reportedHSP = '{}{}'.format(dev.heatSetpoint,scale)
+        reportedCSP = '{}{}'.format(dev.heatSetpoint,scale)
 
-		if stateKey == u"setpointCool":
-			indigo.server.log('set cool to: {} and leave heat at: {}'.format(reportedNewSetpoint,reportedHSP))
-			if self.ecobee.set_hold_temp_id(dev.address, newSetpoint, dev.heatSetpoint):
-				sendSuccess = True
+        if stateKey == u"setpointCool":
+            indigo.server.log('set cool to: {} and leave heat at: {}'.format(reportedNewSetpoint,reportedHSP))
+            if self.ecobee.set_hold_temp_id(dev.address, newSetpoint, dev.heatSetpoint):
+                sendSuccess = True
 
-		elif stateKey == u"setpointHeat":
-			indigo.server.log('set heat to: {} and leave cool at: {}'.format(reportedNewSetpoint,reportedCSP))
- 			if self.ecobee.set_hold_temp_id(dev.address, dev.coolSetpoint, newSetpoint):
-				sendSuccess = True		# Set to False if it failed.
+        elif stateKey == u"setpointHeat":
+            indigo.server.log('set heat to: {} and leave cool at: {}'.format(reportedNewSetpoint,reportedCSP))
+            if self.ecobee.set_hold_temp_id(dev.address, dev.coolSetpoint, newSetpoint):
+                sendSuccess = True      # Set to False if it failed.
 
-		if sendSuccess:
-			indigo.server.log(u"sent \"%s\" %s to %.1f°" % (dev.name, logActionName, newSetpoint))
-			# And then tell the Indigo Server to update the state.
-			if stateKey in dev.states:
-				dev.updateStateOnServer(stateKey, newSetpoint, uiValue="%.1f °F" % (newSetpoint))
-		else:
-			# Else log failure but do NOT update state on Indigo Server.
-			indigo.server.log(u"send \"%s\" %s to %.1f° failed" % (dev.name, logActionName, newSetpoint), isError=True)
+        if sendSuccess:
+            indigo.server.log(u"sent \"%s\" %s to %.1f°" % (dev.name, logActionName, newSetpoint))
+            # And then tell the Indigo Server to update the state.
+            if stateKey in dev.states:
+                dev.updateStateOnServer(stateKey, newSetpoint, uiValue="%.1f °F" % (newSetpoint))
+        else:
+            # Else log failure but do NOT update state on Indigo Server.
+            indigo.server.log(u"send \"%s\" %s to %.1f° failed" % (dev.name, logActionName, newSetpoint), isError=True)
 
-	def runConcurrentThread(self):
-		try:
-			while True:
-					# Plugins that need to poll out the status from the thermostat
-					# could do so here, then broadcast back the new values to the
-					# Indigo Server.
-					# self._refreshStatesFromHardware(dev, False, False)
-				self.updateAllDevices()
-
-				self.sleep(10)
-				if self.ecobee.authenticated:
-					self.ecobee.update()
-					# We need to also re-save the authentication credentials now, since self.ecobee.update() may change them
-					self.pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF] = self.ecobee.access_token
-					self.pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF] = self.ecobee.authorization_code
-					self.pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF] = self.ecobee.refresh_token
-		except self.StopThread:
-			pass	# Optionally catch the StopThread exception and do any needed cleanup.
