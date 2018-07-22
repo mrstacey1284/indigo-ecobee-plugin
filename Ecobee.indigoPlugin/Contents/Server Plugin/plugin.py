@@ -368,9 +368,6 @@ class Plugin(indigo.PluginBase):
         resume_all = "false"
         if action.props.get("resume_all"):
             resume_all = "true"
-        self._resumeProgram(dev, resume_all)
-
-        def _resumeProgram(self, dev, resume_all):
             sendSuccess = False
             if self.ecobee.resume_program_id(dev.pluginProps["address"], resume_all) :
                 sendSuccess = True;

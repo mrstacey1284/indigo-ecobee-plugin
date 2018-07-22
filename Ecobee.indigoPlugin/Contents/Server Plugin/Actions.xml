@@ -9,15 +9,6 @@
      backlightBrightness state added to Devices.xml.
 -->
 <Actions>
-    <Action id="setAwayStatus" deviceFilter="self">
-        <Name>Set Away Status</Name>
-        <CallbackMethod>setAwayStatus</CallbackMethod>
-        <ConfigUI>
-            <Field id="away" type="checkbox" defaultValue="false">
-                <Label>I am away:</Label>
-            </Field>
-        </ConfigUI>
-    </Action>
     <Action id="resumeProgram" deviceFilter="self">
         <Name>Resume Set Program</Name>
         <CallbackMethod>actionResumeProgram</CallbackMethod>
