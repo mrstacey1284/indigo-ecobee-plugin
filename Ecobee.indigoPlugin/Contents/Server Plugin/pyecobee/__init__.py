@@ -215,6 +215,19 @@ class Ecobee(object):
         log_msg_action = "set HVAC mode"
         return self.make_request(body, log_msg_action)
 
+    def set_hvac_mode_id(self, id, hvac_mode):
+        ''' possible hvac modes are auto, auxHeatOnly, cool, heat, off '''
+        body = {"selection": {"selectionType": "thermostats",
+                              "selectionMatch": id,
+                              "thermostat": {
+                                  "settings": {
+                                      "hvacMode": hvac_mode
+                                  }
+                              }}
+        log_msg_action = "set HVAC mode by ID"
+        return self.make_request(body, log_msg_action)
+
+
     def set_fan_min_on_time(self, index, fan_min_on_time):
         ''' The minimum time, in minutes, to run the fan each hour. Value from 1 to 60 '''
         body = {"selection": {"selectionType": "thermostats",
@@ -241,8 +254,7 @@ class Ecobee(object):
         log_msg_action = "set fan mode"
         return self.make_request(body, log_msg_action)
 
-    def set_hold_temp(self, index, cool_temp, heat_temp,
-                      hold_type="nextTransition"):
+    def set_hold_temp(self, index, cool_temp, heat_temp, hold_type="nextTransition"):
         ''' Set a hold '''
         body = {"selection": {
                     "selectionType": "thermostats",
@@ -255,11 +267,50 @@ class Ecobee(object):
         log_msg_action = "set hold temp"
         return self.make_request(body, log_msg_action)
 
+    def set_hold_temp_id(self, id, cool_temp, heat_temp, hold_type="nextTransition"):
+        ''' Set a hold '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": id},
+                "functions": [{"type": "setHold", "params": {
+                    "holdType": hold_type,
+                    "coolHoldTemp": int(cool_temp * 10),
+                    "heatHoldTemp": int(heat_temp * 10)
+                }}]}
+        log_msg_action = "set hold temp by ID"
+        return self.make_request(body, log_msg_action)
+
+    def set_hold_temp_with_fan_id(self, id, cool_temp, heat_temp, hold_type="nextTransition"):
+        ''' Set a fan hold '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": id},
+                "functions": [{"type": "setHold", "params": {
+                    "holdType": hold_type,
+                    "coolHoldTemp": int(cool_temp * 10),
+                    "heatHoldTemp": int(heat_temp * 10),
+                    "fan": "on"
+                }}]}
+        log_msg_action = "set hold temp by ID with fan on"
+        return self.make_request(body, log_msg_action)
+
     def set_climate_hold(self, index, climate, hold_type="nextTransition"):
         ''' Set a climate hold - ie away, home, sleep '''
         body = {"selection": {
                     "selectionType": "thermostats",
                     "selectionMatch": self.thermostats[index]['identifier']},
+                "functions": [{"type": "setHold", "params": {
+                    "holdType": hold_type,
+                    "holdClimateRef": climate
+                }}]}
+        log_msg_action = "set climate hold"
+        return self.make_request(body, log_msg_action)
+
+    def set_climate_hold_id(self, id, climate, hold_type="nextTransition"):
+        ''' Set a climate hold - ie away, home, sleep '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": id },
                 "functions": [{"type": "setHold", "params": {
                     "holdType": hold_type,
                     "holdClimateRef": climate
@@ -284,6 +335,18 @@ class Ecobee(object):
         body = {"selection": {
                     "selectionType": "thermostats",
                     "selectionMatch": self.thermostats[index]['identifier']},
+                "functions": [{"type": "resumeProgram", "params": {
+                    "resumeAll": resume_all
+                }}]}
+
+        log_msg_action = "resume program"
+        return self.make_request(body, log_msg_action)
+
+    def resume_program_id(self, id, resume_all=False):
+        ''' Resume currently scheduled program '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": id },
                 "functions": [{"type": "resumeProgram", "params": {
                     "resumeAll": resume_all
                 }}]}
