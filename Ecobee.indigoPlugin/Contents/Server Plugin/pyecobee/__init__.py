@@ -2,12 +2,12 @@
 import requests
 import json
 import os
-import time
 import logging
 
-RESPONSE_CACHE_TIME_SECONDS = 180
+from requests.exceptions import RequestException;
 
-log = logging.getLogger('pyecobee')
+logger = logging.getLogger('pyecobee')
+
 
 def config_from_file(filename, config=None):
     ''' Small configuration file management function'''
@@ -17,7 +17,7 @@ def config_from_file(filename, config=None):
             with open(filename, 'w') as fdesc:
                 fdesc.write(json.dumps(config))
         except IOError as error:
-            log.error(error)
+            logger.exception(error)
             return False
         return True
     else:
@@ -39,13 +39,12 @@ class Ecobee(object):
         self.thermostats = list()
         self.pin = None
         self.authenticated = False
-        self.lastRefreshTime = 0
 
         if config is None:
             self.file_based_config = True
             if config_filename is None:
                 if api_key is None:
-                    log.error("Error creating Ecobee object. No API Key was supplied.")
+                    logger.error("Error. No API Key was supplied.")
                     return
                 jsonconfig = {"API_KEY": api_key}
                 config_filename = 'ecobee.conf'
@@ -75,18 +74,20 @@ class Ecobee(object):
 
         self.update()
 
-    def _invalidate_cache(self):
-        self.lastRefreshTime = 0
-
     def request_pin(self):
         ''' Method to request a PIN from ecobee for authorization '''
         url = 'https://api.ecobee.com/authorize'
         params = {'response_type': 'ecobeePin',
                   'client_id': self.api_key, 'scope': 'smartWrite'}
-        request = requests.get(url, params=params)
+        try:
+            request = requests.get(url, params=params)
+        except RequestException:
+            logger.warn("Error connecting to Ecobee.  Possible connectivity outage."
+                        "Could not request pin.")
+            return
         self.authorization_code = request.json()['code']
         self.pin = request.json()['ecobeePin']
-        log.error('Please authorize your ecobee developer app with PIN code '
+        logger.error('Please authorize your ecobee developer app with PIN code '
               + self.pin + '\nGoto https://www.ecobee.com/consumerportal'
               '/index.html, click\nMy Apps, Add application, Enter Pin'
               ' and click Authorize.\nAfter authorizing, call request_'
@@ -94,89 +95,69 @@ class Ecobee(object):
 
     def request_tokens(self):
         ''' Method to request API tokens from ecobee '''
-        log.info("pyecobee: requesting tokens; current authentication flag is %s" % self.authenticated)
         url = 'https://api.ecobee.com/token'
         params = {'grant_type': 'ecobeePin', 'code': self.authorization_code,
                   'client_id': self.api_key}
-        request = requests.post(url, params=params)
+        try:
+            request = requests.post(url, params=params)
+        except RequestException:
+            logger.warn("Error connecting to Ecobee.  Possible connectivity outage."
+                        "Could not request token.")
+            return
         if request.status_code == requests.codes.ok:
-            log.info("pyecobee: authenticated after requesting tokens, expires: {}".format(request.json()['expires_in']))
             self.access_token = request.json()['access_token']
             self.refresh_token = request.json()['refresh_token']
             self.write_tokens_to_file()
             self.pin = None
-            self.authenticated = True
         else:
-            log.error('Error while requesting tokens from ecobee.com, Status code = {}'.format(request.status_code))
-            self.authenticated = False
-
-        log.info("pyecobee: finished requesting tokens; authenticated flag is %s" % self.authenticated)
+            logger.warn('Error while requesting tokens from ecobee.com.'
+                  ' Status code: ' + str(request.status_code))
+            return
 
     def refresh_tokens(self):
-        log.info("pyecobee: refreshing tokens; current authentication flag is %s" % self.authenticated)
         ''' Method to refresh API tokens from ecobee '''
         url = 'https://api.ecobee.com/token'
         params = {'grant_type': 'refresh_token',
-                  'client_id': self.api_key,
-                  'refresh_token': self.refresh_token}
+                  'refresh_token': self.refresh_token,
+                  'client_id': self.api_key}
         request = requests.post(url, params=params)
         if request.status_code == requests.codes.ok:
-            log.info("pyecobee: authenticated after refreshing tokens, expires: {}".format(request.json()['expires_in']))
             self.access_token = request.json()['access_token']
             self.refresh_token = request.json()['refresh_token']
             self.write_tokens_to_file()
-            self.authenticated = True
             return True
         else:
-            log.error("pyecobee: NOT authenticated after refreshing tokens, Status code = {}".format(request.status_code))
             self.request_pin()
-            self.authenticated = False
-
-        log.info("pyecobee: finished refreshing tokens; authenticated flag is %s" % self.authenticated)
 
     def get_thermostats(self):
-        seconds_remaining = RESPONSE_CACHE_TIME_SECONDS - time.time() + self.lastRefreshTime
-        if self.thermostats and (seconds_remaining > 0):
-            log.debug("returning cached thermostat information; %.0f seconds until cache expiration" % seconds_remaining)
-            return self.thermostats
-
-        log.debug("getting thermostats via ecobee API")
-
         ''' Set self.thermostats to a json list of thermostats from ecobee '''
         url = 'https://api.ecobee.com/1/thermostat'
         header = {'Content-Type': 'application/json;charset=UTF-8',
                   'Authorization': 'Bearer ' + self.access_token}
         params = {'json': ('{"selection":{"selectionType":"registered",'
-                           '"includeRuntime":"true","includeSensors":"true",'
-                           '"includeEvents":"true",'
-                           '"includeProgram":"true","includeEquipmentStatus"'
-                           ':true,"includeSettings":true}}')}
-        request = requests.get(url, headers=header, params=params)
+                            '"includeRuntime":"true",'
+                            '"includeSensors":"true",'
+                            '"includeProgram":"true",'
+                            '"includeEquipmentStatus":"true",'
+                            '"includeEvents":"true",'
+                            '"includeWeather":"true",'
+                            '"includeSettings":"true"}}')}
+        try:
+            request = requests.get(url, headers=header, params=params)
+        except RequestException:
+            logger.warn("Error connecting to Ecobee.  Possible connectivity outage.")
+            return None
         if request.status_code == requests.codes.ok:
             self.authenticated = True
             self.thermostats = request.json()['thermostatList']
-            self.lastRefreshTime = time.time()
-            log.debug("result: %s" % request.json())
             return self.thermostats
-            
-        elif request.status_code > 500:    # server issue, just try again later     
-            log.error("pyecobee::get_thermostats(): Error connecting to Ecobee while attempting to get thermostat data")
-            try:
-                log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
-            except:
-                log.error("Status code = {}".format(request.status_code))
-        
         else:
             self.authenticated = False
-            log.error("pyecobee::get_thermostats(): Error connecting to Ecobee while attempting to get thermostat data")
-            try:
-                log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
-            except:
-                log.error("Status code = {}".format(request.status_code))
+            logger.info("Error connecting to Ecobee while attempting to get "
+                  "thermostat data.  Refreshing tokens and trying again.")
             if self.refresh_tokens():
                 return self.get_thermostats()
             else:
-                log.error("pyecobee::get_thermostats(): refresh_tokens() failed.")
                 return None
 
     def get_thermostat(self, index):
@@ -186,175 +167,6 @@ class Ecobee(object):
     def get_remote_sensors(self, index):
         ''' Return remote sensors based on index '''
         return self.thermostats[index]['remoteSensors']
-
-    def set_hvac_mode(self, index, hvac_mode):
-        ''' possible hvac modes are auto, auxHeatOnly, cool, heat, off '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8',
-                  'Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"selection":{"selectionType":"thermostats","selectionMatch":'
-                '"' + self.thermostats[index]['identifier'] +
-                '"},"thermostat":{"settings":{"hvacMode":"' + hvac_mode +
-                '"}}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to set HVAC mode, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
-
-    def set_hvac_mode_id(self, id, hvac_mode):
-        ''' possible hvac modes are auto, auxHeatOnly, cool, heat, off '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8',
-                  'Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"selection":{"selectionType":"thermostats","selectionMatch":'
-                '"' + id +
-                '"},"thermostat":{"settings":{"hvacMode":"' + hvac_mode +
-                '"}}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to set HVAC mode, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
-
-
-    def set_hold_temp(self, index, cool_temp, heat_temp,
-                      hold_type="nextTransition"):
-        ''' Set a hold '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8',
-                  'Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"functions":[{"type":"setHold","params":{"holdType":"'
-                + hold_type + '","coolHoldTemp":"' + str(cool_temp * 10) +
-                '","heatHoldTemp":"' + str(heat_temp * 10) + '"}}],'
-                '"selection":{"selectionType":"thermostats","selectionMatch"'
-                ':"' + self.thermostats[index]['identifier'] + '"}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to set hold temp, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
-
-    def set_hold_temp_id(self, id, cool_temp, heat_temp,
-                      hold_type="nextTransition"):
-        ''' Set a hold '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8',
-                  'Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"functions":[{"type":"setHold","params":{"holdType":"'
-                + hold_type + '","coolHoldTemp":"' + str(int(cool_temp * 10)) +
-                '","heatHoldTemp":"' + str(int(heat_temp * 10)) + '"}}],'
-                '"selection":{"selectionType":"thermostats","selectionMatch"'
-                ':"' + id + '"}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to set hold temp, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
-
-    def set_hold_temp_with_fan_id(self, id, cool_temp, heat_temp, hold_type="nextTransition"):
-        ''' Set a fan hold '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8','Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"functions":[{"type":"setHold","params":{"holdType":"' + hold_type +
-               '","coolHoldTemp":"' + str(int(cool_temp * 10)) +
-                '","heatHoldTemp":"' + str(int(heat_temp * 10)) +
-                '","fan": "on"}}],'
-                '"selection":{"selectionType":"thermostats","selectionMatch"'
-                ':"' + id + '"}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to turn fan on, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
-
-
-    def set_climate_hold(self, index, climate, hold_type="nextTransition"):
-        ''' Set a climate hold - ie away, home, sleep '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8',
-                  'Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"functions":[{"type":"setHold","params":{"holdType":"'
-                + hold_type + '","holdClimateRef":"' + climate + '"}}],'
-                '"selection":{"selectionType":"thermostats","selectionMatch"'
-                ':"' + self.thermostats[index]['identifier'] + '"}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to set climate hold, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
-
-    def set_climate_hold_id(self, id, climate, hold_type="nextTransition"):
-        ''' Set a climate hold - ie away, home, sleep '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8', 'Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"functions":[{"type":"setHold","params":{"holdType":"'
-                + hold_type + '","holdClimateRef":"' + climate + '"}}],'
-                '"selection":{"selectionType":"thermostats","selectionMatch"'
-                ':"' + id  + '"}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to set climate hold, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
-
-
-    def resume_program_id(self, id, resume_all="false"):
-        ''' Resume currently scheduled program by ID '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8',
-                  'Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"functions":[{"type":"resumeProgram","params":{"resumeAll"'
-                ':"' + resume_all + '"}}],'
-               '"selection":{"selectionType":"thermostats","selectionMatch"'
-                ':"' + id + '"}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to resume program, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
-
-    def resume_program(self, index, resume_all="false"):
-        ''' Resume currently scheduled program '''
-        url = 'https://api.ecobee.com/1/thermostat'
-        header = {'Content-Type': 'application/json;charset=UTF-8',
-                  'Authorization': 'Bearer ' + self.access_token}
-        params = {'format': 'json'}
-        body = ('{"functions":[{"type":"resumeProgram","params":{"resumeAll"'
-                ':"' + resume_all + '"}}],"selection":{"selectionType"'
-                ':"thermostats","selectionMatch":"'
-                + self.thermostats[index]['identifier'] + '"}}')
-        request = requests.post(url, headers=header, params=params, data=body)
-        if request.status_code == requests.codes.ok:
-            self._invalidate_cache()
-            return request
-        else:
-            log.warning("Error connecting to Ecobee while attempting to resume program, Status code = {}".format(request.status_code))
-            self.refresh_tokens()
 
     def write_tokens_to_file(self):
         ''' Write api tokens to a file '''
@@ -371,3 +183,136 @@ class Ecobee(object):
     def update(self):
         ''' Get new thermostat data from ecobee '''
         self.get_thermostats()
+
+    def make_request(self, body, log_msg_action):
+        url = 'https://api.ecobee.com/1/thermostat'
+        header = {'Content-Type': 'application/json;charset=UTF-8',
+                  'Authorization': 'Bearer ' + self.access_token}
+        params = {'format': 'json'}
+        try:
+            request = requests.post(url, headers=header, params=params, json=body)
+        except RequestException:
+            logger.warn("Error connecting to Ecobee.  Possible connectivity outage.")
+            return None
+        if request.status_code == requests.codes.ok:
+            return request
+        else:
+            logger.info("Error connecting to Ecobee while attempting to %s.  "
+                        "Refreshing tokens and trying again.", log_msg_action)
+            if self.refresh_tokens():
+                return self.make_request(body, log_msg_action)
+            else:
+                return None
+
+    def set_hvac_mode(self, index, hvac_mode):
+        ''' possible hvac modes are auto, auxHeatOnly, cool, heat, off '''
+        body = {"selection": {"selectionType": "thermostats",
+                              "selectionMatch": self.thermostats[index]['identifier']},
+                              "thermostat": {
+                                  "settings": {
+                                      "hvacMode": hvac_mode
+                                  }
+                              }}
+        log_msg_action = "set HVAC mode"
+        return self.make_request(body, log_msg_action)
+
+    def set_fan_min_on_time(self, index, fan_min_on_time):
+        ''' The minimum time, in minutes, to run the fan each hour. Value from 1 to 60 '''
+        body = {"selection": {"selectionType": "thermostats",
+                        "selectionMatch": self.thermostats[index]['identifier']},
+                        "thermostat": {
+                            "settings": {
+                                "fanMinOnTime": fan_min_on_time
+                            }
+                        }}
+        log_msg_action = "set fan minimum on time."
+        return self.make_request(body, log_msg_action)
+
+    def set_fan_mode(self, index, fan_mode, cool_temp, heat_temp, hold_type="nextTransition"):
+        ''' Set fan mode. Values: auto, minontime, on '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": self.thermostats[index]['identifier']},
+                "functions": [{"type": "setHold", "params": {
+                    "holdType": hold_type,
+                    "coolHoldTemp": int(cool_temp * 10),
+                    "heatHoldTemp": int(heat_temp * 10),
+                    "fan": fan_mode
+                }}]}
+        log_msg_action = "set fan mode"
+        return self.make_request(body, log_msg_action)
+
+    def set_hold_temp(self, index, cool_temp, heat_temp,
+                      hold_type="nextTransition"):
+        ''' Set a hold '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": self.thermostats[index]['identifier']},
+                "functions": [{"type": "setHold", "params": {
+                    "holdType": hold_type,
+                    "coolHoldTemp": int(cool_temp * 10),
+                    "heatHoldTemp": int(heat_temp * 10)
+                }}]}
+        log_msg_action = "set hold temp"
+        return self.make_request(body, log_msg_action)
+
+    def set_climate_hold(self, index, climate, hold_type="nextTransition"):
+        ''' Set a climate hold - ie away, home, sleep '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": self.thermostats[index]['identifier']},
+                "functions": [{"type": "setHold", "params": {
+                    "holdType": hold_type,
+                    "holdClimateRef": climate
+                }}]}
+        log_msg_action = "set climate hold"
+        return self.make_request(body, log_msg_action)
+
+    def delete_vacation(self, index, vacation):
+        ''' Delete the vacation with name vacation '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": self.thermostats[index]['identifier']},
+                "functions": [{"type": "deleteVacation", "params": {
+                    "name": vacation
+                }}]}
+
+        log_msg_action = "delete a vacation"
+        return self.make_request(body, log_msg_action)
+
+    def resume_program(self, index, resume_all=False):
+        ''' Resume currently scheduled program '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": self.thermostats[index]['identifier']},
+                "functions": [{"type": "resumeProgram", "params": {
+                    "resumeAll": resume_all
+                }}]}
+
+        log_msg_action = "resume program"
+        return self.make_request(body, log_msg_action)
+
+    def send_message(self, index, message="Hello from python-ecobee!"):
+        ''' Send a message to the thermostat '''
+        body = {"selection": {
+                    "selectionType": "thermostats",
+                    "selectionMatch": self.thermostats[index]['identifier']},
+                "functions": [{"type": "sendMessage", "params": {
+                    "text": message[0:500]
+                }}]}
+
+        log_msg_action = "send message"
+        return self.make_request(body, log_msg_action)
+
+    def set_humidity(self, index, humidity):
+        ''' Set humidity level'''
+        body = {"selection": {"selectionType": "thermostats",
+                              "selectionMatch": self.thermostats[index]['identifier']},
+                              "thermostat": {
+                                  "settings": {
+                                      "humidity": int(humidity)
+                                  }
+                              }}
+
+        log_msg_action = "set humidity level"
+        return self.make_request(body, log_msg_action)
