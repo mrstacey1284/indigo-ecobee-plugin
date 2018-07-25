@@ -45,7 +45,7 @@ class Ecobee(object):
             self.file_based_config = True
             if config_filename is None:
                 if api_key is None:
-                    log.error("Error. No API Key was supplied.")
+                    log.error("Error creating Ecobee object. No API Key was supplied.")
                     return
                 jsonconfig = {"API_KEY": api_key}
                 config_filename = 'ecobee.conf'
@@ -107,8 +107,7 @@ class Ecobee(object):
             self.pin = None
             self.authenticated = True
         else:
-            log.error('Error while requesting tokens from ecobee.com.')
-            log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
+            log.error('Error while requesting tokens from ecobee.com, Status code = {}'.format(request.status_code))
             self.authenticated = False
 
         log.info("pyecobee: finished requesting tokens; authenticated flag is %s" % self.authenticated)
@@ -129,8 +128,7 @@ class Ecobee(object):
             self.authenticated = True
             return True
         else:
-            log.error("pyecobee: NOT authenticated after refreshing tokens")
-            log.error("Status code = {}, error = {}".format(request.status_code, request.json()['error_description']))
+            log.error("pyecobee: NOT authenticated after refreshing tokens, Status code = {}".format(request.status_code))
             self.request_pin()
             self.authenticated = False
 
@@ -204,7 +202,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set HVAC mode.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to set HVAC mode, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
     def set_hvac_mode_id(self, id, hvac_mode):
@@ -222,7 +220,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set HVAC mode.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to set HVAC mode, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
 
@@ -243,7 +241,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set hold temp.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to set hold temp, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
     def set_hold_temp_id(self, id, cool_temp, heat_temp,
@@ -263,7 +261,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set hold temp.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to set hold temp, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
     def set_hold_temp_with_fan_id(self, id, cool_temp, heat_temp, hold_type="nextTransition"):
@@ -282,7 +280,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to turn fan on.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to turn fan on, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
 
@@ -301,7 +299,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set climate hold.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to set climate hold, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
     def set_climate_hold_id(self, id, climate, hold_type="nextTransition"):
@@ -318,7 +316,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to set climate hold.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to set climate hold, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
 
@@ -337,7 +335,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to resume program.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to resume program, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
     def resume_program(self, index, resume_all="false"):
@@ -355,7 +353,7 @@ class Ecobee(object):
             self._invalidate_cache()
             return request
         else:
-            log.warning("Error connecting to Ecobee while attempting to resume program.  Refreshing tokens...")
+            log.warning("Error connecting to Ecobee while attempting to resume program, Status code = {}".format(request.status_code))
             self.refresh_tokens()
 
     def write_tokens_to_file(self):

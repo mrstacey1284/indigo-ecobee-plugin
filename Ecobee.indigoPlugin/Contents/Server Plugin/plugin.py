@@ -19,7 +19,7 @@ AUTHORIZATION_CODE_PLUGIN_PREF='authorizationCode'
 REFRESH_TOKEN_PLUGIN_PREF='refreshToken'
 TEMPERATURE_SCALE_PLUGIN_PREF='temperatureScale'
 
-
+API_KEY = "qyy0od74EpMz2P8X1fmAfyoxKod4t1Fo"
 
 TEMP_FORMATTERS = {
     'F': temperature_scale.Fahrenheit(),
@@ -71,7 +71,7 @@ class Plugin(indigo.PluginBase):
         else:
             self._setTemperatureScale('F')
 
-        tmpconfig = {'API_KEY': "qyy0od74EpMz2P8X1fmAfyoxKod4t1Fo"}
+        tmpconfig = {'API_KEY': API_KEY}
         if ACCESS_TOKEN_PLUGIN_PREF in pluginPrefs:
             tmpconfig['ACCESS_TOKEN'] = pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF]
         if AUTHORIZATION_CODE_PLUGIN_PREF in pluginPrefs:
