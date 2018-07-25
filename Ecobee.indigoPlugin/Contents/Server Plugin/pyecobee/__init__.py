@@ -197,8 +197,7 @@ class Ecobee(object):
         if request.status_code == requests.codes.ok:
             return request
         else:
-            logger.info("Error connecting to Ecobee while attempting to %s.  "
-                        "Refreshing tokens and trying again.", log_msg_action)
+            logger.info("Error connecting to Ecobee while attempting to {}. Status code = {}.  Refreshing tokens and trying again.".format(log_msg_action, request.status_code))
             if self.refresh_tokens():
                 return self.make_request(body, log_msg_action)
             else:
