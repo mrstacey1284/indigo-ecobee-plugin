@@ -145,7 +145,11 @@ class Plugin(indigo.PluginBase):
         self.logger.debug(u"updateFrequency = " + str(self.updateFrequency))
         self.next_update = time.time()
 
-        self.next_refresh = time.time() + REFRESH_INTERVAL
+        self.next_refresh = time.time()
+        
+        self.triggers = {}
+        self.authEventTriggered = False
+        
 
     def shutdown(self):
         indigo.server.log(u"Stopping Ecobee")
@@ -168,16 +172,46 @@ class Plugin(indigo.PluginBase):
 
                 if self.ecobee.authenticated:
                     self.ecobee.update()
+                    
                     # We need to also re-save the authentication credentials now, since self.ecobee.update() may change them
                     self.pluginPrefs[ACCESS_TOKEN_PLUGIN_PREF] = self.ecobee.access_token
                     self.pluginPrefs[AUTHORIZATION_CODE_PLUGIN_PREF] = self.ecobee.authorization_code
                     self.pluginPrefs[REFRESH_TOKEN_PLUGIN_PREF] = self.ecobee.refresh_token
+                    
+                    # make sure we can trigger event next time we loose Authentication
+                    self.authEventTriggered = False
 
+                else:
+                    if not self.authEventTriggered:
+                        self.doTriggers()
+                        self.authEventTriggered = True
+                        
 
                 self.sleep(15.0)
 
         except self.StopThread:
             pass
+
+    def triggerStartProcessing(self, trigger):
+        self.logger.debug("Adding Trigger %s (%d)" % (trigger.name, trigger.id))
+        assert trigger.id not in self.triggers
+        self.triggers[trigger.id] = trigger
+
+    def triggerStopProcessing(self, trigger):
+        self.logger.debug("Removing Trigger %s (%d)" % (trigger.name, trigger.id))
+        assert trigger.id in self.triggers
+        del self.triggers[trigger.id]
+
+    def doTriggers(self):
+
+        for triggerId, trigger in self.triggers.iteritems():
+
+            if trigger.pluginTypeId == "authError":
+                self.logger.debug("Executing Trigger %s (%d)" % (trigger.name, trigger.id))
+                indigo.trigger.execute(trigger)
+            else:
+                self.logger.debug("Unknown Trigger Type %s (%d): %s" % (trigger.name, trigger.id, trigger.pluginTypeId))
+
 
     def request_pin(self, valuesDict = None):
 
@@ -193,6 +227,7 @@ class Plugin(indigo.PluginBase):
     def open_browser_to_ecobee(self, valuesDict = None):
         self.browserOpen("http://www.ecobee.com")
 
+    # called from PluginConfig.xml
     def refresh_credentials(self, valuesDict = None):
         self.ecobee.request_tokens()
         self._get_keys_from_ecobee(valuesDict)
@@ -368,14 +403,7 @@ class Plugin(indigo.PluginBase):
         resume_all = "false"
         if action.props.get("resume_all"):
             resume_all = "true"
-            sendSuccess = False
-            if self.ecobee.resume_program_id(dev.pluginProps["address"], resume_all) :
-                sendSuccess = True;
-            if sendSuccess:
-                indigo.server.log(u"sent resume_program to %s" % dev.address)
-            else:
-                indigo.server.log(u"Failed to send resume_program to %s" % dev.address, isError=True)
-            return sendSuccess
+        self.resumeProgram(dev, resume_all)
 
         ######################
     # Process action request from Indigo Server to change main thermostat's main mode.
@@ -453,7 +481,7 @@ class Plugin(indigo.PluginBase):
 
         if newFanMode == u"auto":
             indigo.server.log('resume normal program to set fan to OFF')
-            if self._resumeProgram(dev, "true"):
+            if self.resumeProgram(dev, "true"):
                 sendSuccess = True
 
         if sendSuccess:
@@ -464,3 +492,14 @@ class Plugin(indigo.PluginBase):
         else:
             # Else log failure but do NOT update state on Indigo Server.
             indigo.server.log(u"send \"%s\" %s to %s failed" % (dev.name, logActionName, newFanMode), isError=True)
+
+    def resumeProgram(self, dev, resume_all):
+        sendSuccess = False
+        if self.ecobee.resume_program_id(dev.pluginProps["address"], resume_all) :
+            sendSuccess = True;
+        if sendSuccess:
+            indigo.server.log(u"sent resume_program to %s" % dev.address)
+        else:
+            indigo.server.log(u"Failed to send resume_program to %s" % dev.address, isError=True)
+        return sendSuccess
+
