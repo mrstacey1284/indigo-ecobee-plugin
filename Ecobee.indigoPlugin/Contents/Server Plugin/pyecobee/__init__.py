@@ -218,7 +218,7 @@ class Ecobee(object):
     def set_hvac_mode_id(self, id, hvac_mode):
         ''' possible hvac modes are auto, auxHeatOnly, cool, heat, off '''
         body = {"selection": {"selectionType": "thermostats",
-                              "selectionMatch": id,
+                              "selectionMatch": id },
                               "thermostat": {
                                   "settings": {
                                       "hvacMode": hvac_mode
@@ -271,7 +271,7 @@ class Ecobee(object):
         ''' Set a hold '''
         body = {"selection": {
                     "selectionType": "thermostats",
-                    "selectionMatch": id},
+                    "selectionMatch": id },
                 "functions": [{"type": "setHold", "params": {
                     "holdType": hold_type,
                     "coolHoldTemp": int(cool_temp * 10),
@@ -284,7 +284,7 @@ class Ecobee(object):
         ''' Set a fan hold '''
         body = {"selection": {
                     "selectionType": "thermostats",
-                    "selectionMatch": id},
+                    "selectionMatch": id },
                 "functions": [{"type": "setHold", "params": {
                     "holdType": hold_type,
                     "coolHoldTemp": int(cool_temp * 10),
