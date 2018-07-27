@@ -53,7 +53,7 @@ def get_thermostats(ecobee):
 
 def _get_thermostat_json(ecobee, address):
     ths = _get_thermostats_json(ecobee)
-    log.debug("looking for thermostat %s in %s" % (address, ths))
+    log.threaddebug("looking for thermostat %s in %s" % (address, ths))
     return [
         th for th in ths
         if address == th.get('identifier')
@@ -76,7 +76,7 @@ def get_remote_sensors(ecobee):
 
 def _get_remote_sensor_json(ecobee, address):
     rss = _get_remote_sensors_json(ecobee)
-    log.debug("looking for remote sensor %s in %s" % (address, rss))
+    log.threaddebug("looking for remote sensor %s in %s" % (address, rss))
     return [
         rs for rs in rss
         if address == rs.get('code')
