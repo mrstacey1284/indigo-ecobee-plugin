@@ -373,10 +373,33 @@ class Plugin(indigo.PluginBase):
         else:
             indigo.server.log(u"Error, received unimplemented action.thermostatAction:%s" % action.thermostatAction, isError=True)
 
-    def climateListGenerator(self, filter, valuesDict, typeId, targetId):                                                                                                                 
-        for t in self.active_thermostats:
-            if t.dev.id == targetId:
-                retList = get_climates(self.ecobee, t.dev.address)
+    def climateListGenerator(self, filter, valuesDict, typeId, targetId):       
+        retList = []
+        foundDumb = False
+        foundSmart = False
+        ##Check dumb thermostats
+        if self.active_thermostats:
+            for t in self.active_thermostats:
+                if t.dev.id == targetId:
+                    retList = get_climates(self.ecobee, t.dev.address)
+                    foundDumb = True
+
+        ## Check for Smart Thermostat
+        elif self.active_smart_thermostats:
+            for t in self.active_smart_thermostats:
+                if t.dev.id == targetId:
+                    retList = get_climates(self.ecobee, t.dev.address)
+                    foundSmart = True
+
+        ## Nothing found in either type of Thermostat
+        else:
+            indigo.server.log(u"No active thermostats found.", isError=True)
+        
+        if foundDumb == False:
+            indigo.server.log(u"Failed to find active DUMB thermostats.")
+        if foundSmart == False:
+           indigo.server.log(u"Failed to find active SMART thermostats.")
+        
         return retList
 
     ########################################
